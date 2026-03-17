@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TempMail</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:monospace;}
+body{background:#fff;color:#111;padding:20px;}
+#app{max-width:580px;margin:0 auto;}
+h2{font-size:16px;font-weight:500;margin-bottom:4px;letter-spacing:0.05em;}
+hr{border:none;border-top:1px solid #ddd;margin:12px 0;}
+.lbl{font-size:11px;color:#888;margin-bottom:4px;letter-spacing:0.05em;}
+.alias{font-size:15px;font-weight:600;padding:10px 12px;border:1px solid #ccc;border-radius:4px;background:#f7f7f7;word-break:break-all;margin-bottom:8px;}
+.row{display:flex;gap:6px;margin-bottom:16px;align-items:center;flex-wrap:wrap;}
+button{padding:7px 13px;font-family:monospace;font-size:12px;cursor:pointer;border:1px solid #bbb;background:#f0f0f0;color:#111;border-radius:4px;}
+button:hover{background:#e0e0e0;}
+.email-card{border:1px solid #e0e0e0;border-radius:4px;padding:10px;margin-bottom:8px;background:#fff;cursor:pointer;}
+.email-card:hover{background:#f7f7f7;}
+.email-from{font-size:11px;color:#888;}
+.email-sub{font-size:13px;font-weight:600;margin:3px 0;color:#111;}
+.email-snip{font-size:12px;color:#888;}
+.email-time{font-size:11px;color:#aaa;margin-top:4px;}
+.status{font-size:12px;color:#888;padding:4px 0;}
+.ok{color:green;font-size:12px;}
+.err{color:red;font-size:12px;}
+.auto-badge{font-size:11px;color:#888;background:#f0f0f0;padding:2px 7px;border-radius:3px;border:1px solid #ddd;}
+.big-btn{padding:10px 22px;font-size:14px;background:#4285f4;color:#fff;border:none;border-radius:4px;cursor:pointer;}
+.big-btn:hover{background:#3367d6;}
+.modal-bg{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:100;align-items:flex-start;justify-content:center;padding-top:40px;}
+.modal{background:#fff;border:1px solid #ddd;border-radius:8px;padding:20px;max-width:560px;width:95%;max-height:80vh;overflow-y:auto;}
+.modal-close{float:right;cursor:pointer;font-size:18px;color:#888;background:none;border:none;}
+.email-body{font-size:13px;line-height:1.7;color:#111;margin-top:12px;}
+.email-body img{max-width:100%;}
+</style>
+</head>
+<body>
+<div id="app">
+  <h2>TEMPMAIL</h2>
+  <hr>
+
+  <div id="signin-section">
+    <div class="status" style="margin-bottom:14px;">Gmail se login karo — ek baar sirf</div>
+    <button class="big-btn" onclick="doSignIn()">Gmail se Login karo</button>
+    <div id="signin-err" class="err" style="margin-top:10px;"></div>
+  </div>
+
+  <div id="main-section" style="display:none;">
+    <div class="lbl">AAPKA TEMP EMAIL</div>
+    <div class="alias" id="alias-text">—</div>
+    <div class="row">
+      <button onclick="copyAlias()">Copy</button>
+      <button onclick="newAlias()">Naya Email</button>
+      <button onclick="loadEmails()">Refresh</button>
+      <span class="auto-badge" id="auto-lbl">Auto: 30s</span>
+      <span id="copy-ok" class="ok" style="display:none;">Copied!</span>
+    </div>
+
+    <hr>
+
+    <div class="lbl">INBOX</div>
+    <div id="inbox-status" class="status">Refresh dabao emails dekhne ke liye</div>
+    <div id="inbox"></div>
+
+    <hr>
+    <div class="row" style="justify-content:space-between;">
+      <span class="status" id="user-lbl"></span>
+      <button onclick="signOut()">Logout</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="modal-bg" onclick="closeModal(event)">
+  <div class="modal">
+    <button class="modal-close" onclick="document.getElementById('modal-bg').style.display='none'">✕</button>
+    <div id="modal-from" style="font-size:12px;color:#888;"></div>
+    <div id="modal-sub" style="font-size:15px;font-weight:600;margin:6px 0;"></div>
+    <hr>
+    <div id="modal-body" class="email-body"></div>
+  </div>
+</div>
+
+<script src="https://accounts.google.com/gsi/client" async></script>
+<script>
+const CLIENT_ID='90166221361-654hgksgogbtl9pmd4slpqpsue947tie.apps.googleusercontent.com';
+let tokenClient,accessToken,baseEmail,currentAlias,refreshInterval,countTimer,countdown=30;
+
+function waitForGSI(cb){
+  if(window.google&&window.google.accounts){cb();return;}
+  setTimeout(()=>waitForGSI(cb),300);
+}
+
+function doSignIn(){
+  document.getElementById('signin-err').textContent='';
+  waitForGSI(()=>{
+    tokenClient=google.accounts.oauth2.initTokenClient({
+      client_id:CLIENT_ID,
+      scope:'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/userinfo.email',
+      callback:onToken
+    });
+    tokenClient.requestAccessToken();
+  });
+}
+
+async function onToken(resp){
+  if(resp.error){
+    document.getElementById('signin-err').textContent='Error: '+resp.error+' — Test user mein apni Gmail add ki hai?';
+    return;
+  }
+  accessToken=resp.access_token;
+  try{
+    const r=await fetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{Authorization:'Bearer '+accessToken}});
+    const d=await r.json();
+    baseEmail=d.email;
+    document.getElementById('user-lbl').textContent=baseEmail;
+    document.getElementById('signin-section').style.display='none';
+    document.getElementById('main-section').style.display='block';
+    newAlias();
+    startRefresh();
+  }catch(e){
+    document.getElementById('signin-err').textContent='Login fail: '+e.message;
+  }
+}
+
+function rand(n){
+  const c='abcdefghijklmnopqrstuvwxyz0123456789';
+  let s='';for(let i=0;i<n;i++)s+=c[Math.floor(Math.random()*c.length)];return s;
+}
+
+function newAlias(){
+  if(!baseEmail)return;
+  const base=baseEmail.split('@')[0];
+  currentAlias=base+'+'+rand(6)+'@gmail.com';
+  document.getElementById('alias-text').textContent=currentAlias;
+  document.getElementById('inbox').innerHTML='';
+  document.getElementById('inbox-status').textContent='Refresh dabao emails dekhne ke liye';
+}
+
+function copyAlias(){
+  if(!currentAlias)return;
+  navigator.clipboard.writeText(currentAlias);
+  const el=document.getElementById('copy-ok');
+  el.style.display='inline';
+  setTimeout(()=>el.style.display='none',1500);
+}
+
+function startRefresh(){
+  if(refreshInterval)clearInterval(refreshInterval);
+  if(countTimer)clearInterval(countTimer);
+  loadEmails();
+  countdown=30;
+  refreshInterval=setInterval(()=>{loadEmails();countdown=30;},30000);
+  countTimer=setInterval(()=>{
+    countdown--;
+    document.getElementById('auto-lbl').textContent='Auto: '+countdown+'s';
+    if(countdown<=0)countdown=30;
+  },1000);
+}
+
+async function loadEmails(){
+  if(!accessToken||!currentAlias)return;
+  document.getElementById('inbox-status').textContent='Loading...';
+  try{
+    const q=encodeURIComponent('to:'+currentAlias);
+    const r=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages?q='+q+'&maxResults=20',{
+      headers:{Authorization:'Bearer '+accessToken}
+    });
+    const d=await r.json();
+    if(!d.messages||d.messages.length===0){
+      document.getElementById('inbox-status').textContent='Koi email nahi aya abhi tak';
+      document.getElementById('inbox').innerHTML='';
+      return;
+    }
+    document.getElementById('inbox-status').textContent='';
+    const inbox=document.getElementById('inbox');
+    inbox.innerHTML='';
+    for(const msg of d.messages){
+      const md=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/'+msg.id+'?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date',{
+        headers:{Authorization:'Bearer '+accessToken}
+      });
+      const m=await md.json();
+      const hdrs=m.payload.headers;
+      const from=hdrs.find(h=>h.name==='From')?.value||'Unknown';
+      const sub=hdrs.find(h=>h.name==='Subject')?.value||'(No Subject)';
+      const date=hdrs.find(h=>h.name==='Date')?.value||'';
+      const snip=m.snippet||'';
+      const card=document.createElement('div');
+      card.className='email-card';
+      card.innerHTML='<div class="email-from">From: '+esc(from)+'</div><div class="email-sub">'+esc(sub)+'</div><div class="email-snip">'+esc(snip.substring(0,90))+'...</div><div class="email-time">'+esc(date)+'</div>';
+      card.onclick=()=>openEmail(msg.id,from,sub);
+      inbox.appendChild(card);
+    }
+  }catch(e){
+    document.getElementById('inbox-status').textContent='Error: '+e.message;
+  }
+}
+
+async function openEmail(id,from,sub){
+  document.getElementById('modal-from').textContent='From: '+from;
+  document.getElementById('modal-sub').textContent=sub;
+  document.getElementById('modal-body').textContent='Loading...';
+  document.getElementById('modal-bg').style.display='flex';
+  try{
+    const r=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/'+id+'?format=full',{
+      headers:{Authorization:'Bearer '+accessToken}
+    });
+    const d=await r.json();
+    const body=getBody(d.payload);
+    document.getElementById('modal-body').innerHTML=body;
+  }catch(e){
+    document.getElementById('modal-body').textContent='Error: '+e.message;
+  }
+}
+
+function getBody(payload){
+  if(!payload)return'(empty)';
+  if(payload.parts){
+    const html=payload.parts.find(p=>p.mimeType==='text/html');
+    if(html&&html.body?.data)return decode(html.body.data);
+    const txt=payload.parts.find(p=>p.mimeType==='text/plain');
+    if(txt&&txt.body?.data)return'<pre>'+esc(decode(txt.body.data))+'</pre>';
+    for(const part of payload.parts){
+      const r=getBody(part);
+      if(r!=='(empty)')return r;
+    }
+  }
+  if(payload.body?.data){
+    if(payload.mimeType==='text/html')return decode(payload.body.data);
+    return'<pre>'+esc(decode(payload.body.data))+'</pre>';
+  }
+  return'(No content)';
+}
+
+function decode(data){
+  return atob(data.replace(/-/g,'+').replace(/_/g,'/'));
+}
+
+function esc(t){
+  return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function closeModal(e){
+  if(e.target.id==='modal-bg')document.getElementById('modal-bg').style.display='none';
+}
+
+function signOut(){
+  if(accessToken&&window.google)google.accounts.oauth2.revoke(accessToken);
+  accessToken=null;baseEmail=null;currentAlias=null;
+  if(refreshInterval)clearInterval(refreshInterval);
+  if(countTimer)clearInterval(countTimer);
+  document.getElementById('main-section').style.display='none';
+  document.getElementById('signin-section').style.display='block';
+  document.getElementById('signin-err').textContent='';
+}
+</script>
+</body>
+</html>
